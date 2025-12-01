@@ -2,6 +2,7 @@
     "name": "photoboothproject/photobooth",
     "type": "project",
     "license": "MIT",
+    "description": "Photobooth software.",
     "require": {
         "php": "^8.2",
         "ext-gd": "*",
