@@ -1,6 +1,7 @@
 <?php
 
 use Photobooth\Service\LanguageService;
+use Photobooth\Utility\PathUtility;
 
 $languageService = LanguageService::getInstance();
 $previewFlipClass = $config['preview']['flip'];
@@ -44,15 +45,15 @@ echo '<div class="preview">';
 echo '<div id="preview-container" style="aspect-ratio: ' . $comp . '">';
 echo '<div id="preview-wrapper" style="aspect-ratio:' . $comp . '">';
 echo '<video id="preview--video" style="' . $composed_style . '" class="' . $previewFlipClass . ' ' . $previewStyleClass . '" autoplay playsinline></video>';
-echo '<img id="preview--ipcam" style="' . $composed_style . '" class="' . $previewFlipClass . ' ' . $previewStyleClass . '"></img>';
+echo '<div id="preview--ipcam" style="' . $composed_style . '" class="' . $previewFlipClass . ' ' . $previewStyleClass . '"></div>';
 echo '<div id="preview--none">' . $languageService->translate('no_preview') . '</div>';
 echo '</div></div>';
 
 if ($previewShowPictureFrame) {
-    echo '<img id="previewframe--picture" class="' . $previewFlipClass . '" src="' . $config['picture']['frame'] . '" alt="pictureFrame" />';
+    echo '<img id="previewframe--picture" class="' . $previewFlipClass . '" src="' . PathUtility::getPublicPath($config['picture']['frame']) . '" alt="pictureFrame" />';
 }
 if ($previewShowCollageFrame) {
-    echo '<img id="previewframe--collage" class="' . $previewFlipClass . '" src="' . $config['collage']['frame'] . '" alt="collageFrame" />';
+    echo '<img id="previewframe--collage" class="' . $previewFlipClass . '" src="' . PathUtility::getPublicPath($config['collage']['frame']) . '" alt="collageFrame" />';
 }
 
 echo '</div>';

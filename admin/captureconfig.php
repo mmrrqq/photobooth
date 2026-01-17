@@ -1,25 +1,13 @@
 <?php
 
 /** @var array $config */
-require_once '../lib/boot.php';
+require_once __DIR__ . '/admin_boot.php';
 
 use Photobooth\Environment;
 use Photobooth\Service\ConfigurationService;
 use Photobooth\Service\LoggerService;
 use Photobooth\Service\ProcessService;
 use Photobooth\Utility\PathUtility;
-
-// Login / Authentication check
-if (!(
-    !$config['login']['enabled'] ||
-    (!$config['protect']['localhost_admin'] && isset($_SERVER['SERVER_ADDR']) &&  $_SERVER['REMOTE_ADDR'] === $_SERVER['SERVER_ADDR']) ||
-    (isset($_SESSION['auth']) && $_SESSION['auth'] === true) || !$config['protect']['admin']
-)) {
-    header('location: ' . PathUtility::getPublicPath('login'));
-    exit();
-}
-
-header('Content-Type: application/json');
 
 $loggerService = LoggerService::getInstance();
 $logger = $loggerService->getLogger('main');
@@ -30,6 +18,7 @@ $logger->debug('Saving Photobooth configuration for go2rtc...');
 
 $config['commands']['preview'] = '';
 $config['commands']['take_picture'] = 'capture %s';
+$config['commands']['take_collage'] = 'capture %s';
 
 $config['picture']['cheese_time'] = '0';
 
@@ -39,22 +28,33 @@ $config['preview']['camTakesPic'] = false;
 
 try {
     $configurationService->update($config);
-    $logger->debug('New config saved.');
-    echo json_encode([
-        'status' => 'success',
-        'message' => 'New config saved.',
-    ]);
+    $message = 'New config saved.';
+    $status = 'success';
 } catch (\Exception $exception) {
-    $logger->error('ERROR: Config can not be saved!');
-    echo json_encode([
-        'status' => 'error',
-            'message' => $exception->getMessage(),
-    ]);
+    $message = $exception->getMessage();
+    $status = 'error';
 }
 
 // Kill service daemons after config has changed
 ProcessService::getInstance()->shutdown();
+?>
 
-// return to Adminpanel
-header('location: ' . PathUtility::getPublicPath('admin'));
-exit();
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="refresh" content="2;url=<?= PathUtility::getPublicPath('admin') ?>">
+    <style>
+        body { font-family: sans-serif; padding: 2rem; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <div class="<?= $status ?>">
+        <?= htmlspecialchars($message) ?>
+    </div>
+    <p>Redirecting…</p>
+</body>
+</html>
+<?php
+exit;

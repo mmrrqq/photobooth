@@ -36,7 +36,7 @@
   max-height: 100%;
   translate: -50% -50%;
   font-size: 1.75em;
-  color: var(--start-font-color);
+  color: var(--start-text-color);
   text-align: center;
 }
 
@@ -90,5 +90,11 @@
   }
   &.flip-vertical {
     scale: 1 -1;
+  }
+}
+
+#preview--ipcam {
+  &.streaming {
+    background-image: var(--background-preview);
   }
 }

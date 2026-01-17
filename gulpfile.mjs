@@ -98,6 +98,7 @@ gulp.task('js-admin', function () {
       './assets/js/admin/imageSelect.js',
       './assets/js/admin/fontSelect.js',
       './assets/js/admin/videoSelect.js',
+      './assets/js/admin/themes.js',
       './assets/js/admin/toast.js',
     ])
     .pipe(concat('main.admin.js'))
@@ -143,3 +144,8 @@ gulp.task('default', gulp.series(
     gulp.parallel('sass', 'js', 'js-admin', 'tailwind-admin'),
     generateAssetRevisions
 ));
+
+gulp.task('watch', function () {
+  gulp.watch(['assets/js/**/*.js'], gulp.series('js', 'js-admin', generateAssetRevisions));
+  gulp.watch(['assets/sass/**/*.scss', 'private/sass/**/*.scss', 'config/tailwind.admin.config.mjs'], gulp.series('sass', 'tailwind-admin', generateAssetRevisions));
+});

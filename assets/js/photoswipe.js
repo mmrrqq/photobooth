@@ -1,5 +1,5 @@
 /* exported initPhotoSwipeFromDOM */
-/* globals photoBooth photoboothTools rotaryController remoteBuzzerClient */
+/* globals photoBooth photoboothTools rotaryController remoteBuzzerClient csrf */
 
 // eslint-disable-next-line no-unused-vars
 let globalGalleryHandle;
@@ -84,7 +84,8 @@ function initPhotoSwipeFromDOM(gallerySelector) {
                             method: 'GET',
                             url: 'api/printDB.php',
                             data: {
-                                action: 'getPrintCount'
+                                action: 'getPrintCount',
+                                [csrf.key]: csrf.token
                             },
                             success: (data) => {
                                 el.innerText = photoboothTools.getTranslation('printed') + ' ' + data.count;
@@ -184,15 +185,29 @@ function initPhotoSwipeFromDOM(gallerySelector) {
                                 if (document.getElementById('pswpQR')) {
                                     document.getElementById('pswpQR').remove();
                                 }
+                                const qrWrapper = document.createElement('div');
+                                qrWrapper.id = 'pswpQR';
+                                qrWrapper.setAttribute('class', 'pswp-qrcode ' + config.qr.pswp);
+
                                 const qrImage = document.createElement('img');
+                                qrImage.addEventListener('load', () => {
+                                    $('.pswp').append(qrWrapper);
+                                });
                                 qrImage.src =
                                     environment.publicFolders.api +
                                     '/qrcode.php?filename=' +
                                     pswp.currSlide.data.src.split('\\').pop().split('/').pop();
-                                qrImage.alt = 'qr code';
-                                qrImage.id = 'pswpQR';
-                                qrImage.setAttribute('class', 'pswp-qrcode ' + config.qr.pswp);
-                                $('.pswp').append(qrImage);
+                                qrImage.alt = 'QR-Code';
+                                qrImage.classList.add('pswp-qrcode__image');
+                                qrWrapper.append(qrImage);
+
+                                const qrShortText = config.qr.short_text;
+                                if (qrShortText && qrShortText.length > 0) {
+                                    const qrCaption = document.createElement('p');
+                                    qrCaption.classList.add('pswp-qrcode__caption');
+                                    qrCaption.textContent = qrShortText;
+                                    qrWrapper.append(qrCaption);
+                                }
                             });
                         }
                     },

@@ -82,8 +82,8 @@ EXTRA_PACKAGES=(
 )
 
 # go2rtc
-DEFAULT_GO2RTC_VERSION="1.9.12"
-GO2RTC_VERSIONS=("1.9.12" "1.9.11" "1.9.10" "1.9.9" "1.9.8" "1.9.7" "1.9.6" "1.9.4" "1.9.2")
+DEFAULT_GO2RTC_VERSION="1.9.13"
+GO2RTC_VERSIONS=("1.9.13" "1.9.12" "1.9.11" "1.9.10" "1.9.9" "1.9.8" "1.9.7" "1.9.6" "1.9.4" "1.9.2")
 GO2RTC_UPDATE_ONLY=false
 GO2RTC_EXTRA_PACKAGES=(
     "ffmpeg"
@@ -98,6 +98,22 @@ GPHOTO2_WEBCAM_EXTRA_PACKAGES=(
     "python3-gphoto2"
     "python3-psutil"
     "python3-zmq"
+)
+
+# rembg
+REMBG_PACKAGES=(
+    "python3"
+    "python3-pip"
+    "python3-venv"
+    "php${PHP_VERSION}-curl"
+)
+
+REMBG_PIP_PACKAGES=(
+    "rembg[cpu,cli]"
+    "pillow"
+    "filetype"
+    "watchdog"
+    "aiohttp"
 )
 
 # ==================================================
@@ -131,8 +147,9 @@ function info() {
     if [ "$SILENT" = true ]; then
         echo "$title: $message"
     else
-        whiptail --title "$title" --infobox "$message" "$height" "$width"
+        whiptail --title "$title" --infobox "$message" "$height" "$width"  < /dev/tty > /dev/tty 2>&1
     fi
+    sleep 1
 }
 
 function warn() {
@@ -692,8 +709,9 @@ function prepare_php_environment() {
     # Add PHP repository based on OS
     if [[ "${DEBIAN[*]}" =~ $OS_CODENAME ]]; then
         info "PHP preparation" "Adding Sury PHP repository for Debian."
-        wget -qO /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg
-        echo "deb https://packages.sury.org/php/ $OS_CODENAME main" | tee /etc/apt/sources.list.d/php.list
+        wget -qO /etc/apt/trusted.gpg.d/php.gpg https://packages.sury.org/php/apt.gpg >/dev/null 2>&1
+        echo "deb https://packages.sury.org/php/ $OS_CODENAME main" \
+            | tee /etc/apt/sources.list.d/php.list >/dev/null 2>&1
     elif [[ "$OS_CODENAME" == "mantic" ]]; then
         info "PHP preparation" "No source lists available for 'mantic'."
     else
@@ -747,8 +765,8 @@ function set_php_version_cli() {
     local priority
     priority=$(echo "$version" | tr -d '.')
 
-    update-alternatives --install /usr/bin/php php "$php_bin" "$priority"
-    update-alternatives --set php "$php_bin"
+    update-alternatives --install /usr/bin/php php "$php_bin" "$priority" >/dev/null 2>&1 || warn "Failed to install PHP via update-alternatives."
+    update-alternatives --set php "$php_bin" >/dev/null 2>&1 || error "Failed to set default PHP CLI version."
 
     info "PHP CLI" "CLI php now points to: $(php -v | head -n1)"
     return 0
@@ -762,12 +780,18 @@ function set_php_version_apache() {
         return 1
     fi
 
-    # Disable all PHP Apache modules
     a2dismod -f php* >/dev/null 2>&1 || true
 
-    # Enable only the requested version
-    if a2enmod "php${version}"; then
-        confirm "Apache Webserver" "Apache is now configured to use PHP ${version} (Note: Apache will apply this on next boot!)."
+    if a2enmod "php${version}" >/dev/null 2>&1; then
+        confirm "Apache Webserver" "Apache is now configured to use PHP ${version} "
+        if [[ "$HAS_SYSTEMD" == true ]]; then
+            if systemctl is-active --quiet apache2; then
+                # Restart if already running
+                if ! systemctl restart apache2 &>/dev/null; then
+                    confirm "Apache Webserver" "Failed to restart Apache Webserver. Please reboot to apply."
+                fi
+            fi
+        fi
         return 0
     else
         error "Could not enable php${version} for Apache" >&2
@@ -845,8 +869,12 @@ function toggle_skip_python() {
 #
 # ==================================================
 function detect_browser() {
-    local browser
-    browser=$(update-alternatives --display x-www-browser | grep 'currently' | awk -F/ '{print $4}')
+    local browser=""
+
+    if update-alternatives --query x-www-browser &>/dev/null; then
+        browser=$(update-alternatives --display x-www-browser \
+            | grep 'currently' | awk -F/ '{print $4}')
+    fi
 
     case "$browser" in
         chromium-browser|chromium|google-chrome|google-chrome-stable|google-chrome-beta)
@@ -858,6 +886,14 @@ function detect_browser() {
             CHROME_FLAGS=false
             ;;
         *)
+            for b in chromium chromium-browser google-chrome google-chrome-stable google-chrome-beta firefox firefox-esr; do
+                if command -v "$b" >/dev/null; then
+                    WEBBROWSER="$b"
+                    [[ "$b" =~ chrome|chromium ]] && CHROME_FLAGS=true || CHROME_FLAGS=false
+                    return
+                fi
+            done
+
             WEBBROWSER="unknown"
             CHROME_FLAGS=false
             ;;
@@ -1701,19 +1737,29 @@ function update_php_ini() {
     local bu_date
     bu_date=$(date +%Y%m%d%H%M%S)
 
-    # If no path provided OR file doesn't exist → auto-detect
+    # If no path provided OR file doesn't exist --> auto-detect
     if [ -z "$php_ini" ] || [ ! -f "$php_ini" ]; then
         if [ ! -f "$php_ini" ]; then
             warn "The file '$php_ini' does not exist. Trying to auto-detect..."
         fi
         local php_version
         php_version=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
-        php_ini="/etc/php/$php_version/apache2/php.ini"
+        local php_base="/etc/php/$php_version"
+        local candidates=(
+            "$php_base/apache2/php.ini"
+            "$php_base/fpm/php.ini"
+        )
 
-        if [ -f "$php_ini" ]; then
-            info "PHP INI Update" "Auto-detected php.ini at '$php_ini'."
-        else
-            warn "Could not locate php.ini (tried '$php_ini')."
+        for candidate in "${candidates[@]}"; do
+            if [ -f "$candidate" ]; then
+                php_ini="$candidate"
+                info "PHP INI Update" "Auto-detected php.ini at '$php_ini'."
+                break
+            fi
+        done
+
+        if [ -z "$php_ini" ] || [ ! -f "$php_ini" ]; then
+            warn "Could not locate php.ini (checked apache2 and fpm)."
             return 2
         fi
     fi
@@ -1744,15 +1790,13 @@ function update_php_ini() {
     fi
 
     if [[ "$HAS_SYSTEMD" == true ]]; then
-        # Restart the apache2 service
-        if systemctl restart apache2 >/dev/null 2>&1; then
-            info "PHP INI Update" "Restarted Apache2 service successfully."
+        if [[ "$php_ini" == *"/apache2/"* ]]; then
+            systemctl restart apache2 && info "PHP INI Update" "Restarted Apache2."
+        elif [[ "$php_ini" == *"/fpm/"* ]]; then
+            systemctl restart php"$php_version"-fpm && info "PHP INI Update" "Restarted PHP-FPM."
         else
-            warn "Failed to restart the Apache2 service."
-            return 6
+            warn "No service restart performed."
         fi
-    else
-        warn "Can not restart the Apache2 service, systemctl unavailable."
     fi
 
     return 0
@@ -2332,6 +2376,110 @@ function remove_gphoto_webcam() {
 }
 
 # ==================================================
+# Rembg
+# ==================================================
+function rembg_install() {
+    local script_dir="/var/www/rembg"
+    local venv_dir="$script_dir/rembg_venv"
+
+    mkdir -p "$script_dir"
+    chown -R www-data:www-data "$script_dir"
+
+    info "Rembg" "Installing dependencies..."
+    if command -v apt >/dev/null 2>&1; then
+        if ! install_packages "${REMBG_PACKAGES[@]}"; then
+            return 1
+        fi
+    else
+        error "Rembg: Unsupported package manager."
+        return 2
+    fi
+
+    rm -rf "$venv_dir"
+
+    info "Rembg" "Creating virtual environment..."
+    sudo -u www-data bash -lc "python3 -m venv '$venv_dir'" || return 3
+
+    local venv_py="$venv_dir/bin/python"
+
+    info "Rembg" "Upgrading pip..."
+    sudo -u www-data bash -lc "'$venv_py' -m pip install --upgrade pip >/dev/null 2>&1" || return 4
+
+    info "Rembg" "Installing Python dependencies..."
+    local pkg
+    for pkg in "${REMBG_PIP_PACKAGES[@]}"; do
+        sudo -u www-data bash -lc "'$venv_py' -m pip install \"$pkg\" >/dev/null 2>&1" || return 5
+    done
+
+    info "Rembg" "Installing systemd service..."
+    cat >/etc/systemd/system/rembg.service <<EOF
+[Unit]
+Description=Rembg Background Removal Service
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=$script_dir
+ExecStart=$venv_dir/bin/rembg s --host 0.0.0.0 --port 7000 --log_level info
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if [[ "$HAS_SYSTEMD" == true ]]; then
+        systemctl daemon-reload >/dev/null 2>&1
+        systemctl enable rembg.service >/dev/null 2>&1 || return 6
+        systemctl start rembg.service >/dev/null 2>&1 || return 7
+
+    else
+        local symlink="/etc/systemd/system/multi-user.target.wants/rembg.service"
+
+        if [[ -L "$symlink" ]]; then
+            rm -f "$symlink" && info "Rembg" "Removed old symlink: $symlink"
+        fi
+
+        if [[ -d "/etc/systemd/system/multi-user.target.wants" ]]; then
+            ln -s ../rembg.service "$symlink" \
+            && info "Rembg" "Created symlink: $symlink"
+        else
+            info "Rembg" "Symlink directory missing, skipping manual enable."
+        fi
+    fi
+
+    confirm "Rembg Installation" "Rembg installed successfully."
+    return 0
+}
+
+function rembg_remove() {
+    local script_dir="$INSTALLFOLDERPATH/rembg"
+
+    if [[ "$HAS_SYSTEMD" == true ]]; then
+        if systemctl is-active --quiet rembg.service 2>/dev/null; then
+            systemctl stop rembg.service >/dev/null 2>&1 || true
+        fi
+
+        if systemctl is-enabled --quiet rembg.service 2>/dev/null; then
+            systemctl disable rembg.service >/dev/null 2>&1 || true
+        fi
+        systemctl daemon-reload >/dev/null 2>&1
+
+    else
+        local SYMLINK="/etc/systemd/system/multi-user.target.wants/rembg.service"
+
+        [[ -L "$SYMLINK" ]] && rm -f "$SYMLINK"
+    fi
+
+    rm -f /etc/systemd/system/rembg.service
+    rm -rf "$script_dir"
+
+    confirm "Rembg Removal" "Rembg and its service were removed."
+    return 0
+}
+
+# ==================================================
 # Installation / update functions
 # ==================================================
 
@@ -2498,7 +2646,6 @@ function start_git_install() {
         else
             error "Failed to reapply local changes."
             sudo -u www-data git am --abort >/dev/null 2>&1
-            return 2
         fi
 
         sudo -u www-data mv "0001-backup-changes.patch" "$INSTALLFOLDERPATH/private/$(date +%Y%m%d%H%M%S)-backup-changes.patch" >/dev/null 2>&1
@@ -2760,7 +2907,7 @@ function install_or_update_photobooth() {
                 setup_apache=true
                 ;;
             2)
-                comfirm "Webserver" "Nginx is installed and running. Please configure your Webserver manually if needed."
+                confirm "Webserver" "Nginx is installed and running. Please configure your Webserver manually if needed."
                 setup_apache=false
                 ;;
             3)
@@ -3717,6 +3864,38 @@ function misc_menu() {
     done
 }
 
+# ==================================================
+# Rembg Setup Menu
+# ==================================================
+function rembg_setup_menu() {
+    while true; do
+        local choice
+
+        choice=$(whiptail --title "Rembg Setup" \
+            --menu "Choose an option:" 20 60 10 \
+            --ok-button Select --cancel-button Back \
+            "1" "Install rembg (background removal)" \
+            "2" "Remove rembg" \
+            3>&1 1>&2 2>&3)
+
+        local status=$?
+        [[ $status -ne 0 ]] && return 0
+
+        case "$choice" in
+            1)
+                if ! rembg_install; then
+                    confirm "Rembg" "Installation failed. Check logs and try again."
+                fi
+                ;;
+            2)
+                if ! rembg_remove; then
+                    confirm "Rembg" "Removal failed."
+                fi
+                ;;
+        esac
+    done
+}
+
 function start_page() {
     if photobooth_installed; then
         check_git_install
@@ -3744,7 +3923,8 @@ function start_page() {
             "4" "go2rtc"
             "5" "gphoto2 webcam"
             "6" "Permissions"
-            "7" "Misc"
+            "7" "Rembg Setup"
+            "8" "Misc"
         )
 
         if ! CHOICE=$(whiptail --title "Photobooth Setup Wizard" \
@@ -3793,6 +3973,9 @@ function start_page() {
                 manage_permissions
                 ;;
             7)
+                rembg_setup_menu
+                ;;
+            8)
                 misc_menu
                 ;;
             *)
@@ -3921,6 +4104,10 @@ if [ "$SILENT" = true ]; then
     check_photobooth_version
     install_system_icon || warn "Failed to install Photobooth system icon"
     exit
+else
+    # Non-silent mode → whiptail only
+    # Preserve terminal for interactive menus
+    exec 3>&1 4>&2
 fi
 
 detect_browser
